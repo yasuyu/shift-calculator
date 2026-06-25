@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>シフト給与計算（休憩時間対応・完全版）</title>
+    <link rel="stylesheet" href="shift.css">
+</head>
+<body>
+
+<div class="container">
+    <h2>シフト給与計算</h2>
+
+    <div class="upload-area">
+        <div class="field">
+            <label for="apiKey">Groq APIキー</label>
+            <input type="password" id="apiKey" placeholder="gsk_... から始まるキーを入力" autocomplete="off">
+        </div>
+        <div class="field">
+            <label for="personName">対象者の名前（シフト表に書かれている通り）</label>
+            <input type="text" id="personName" placeholder="例: 優">
+        </div>
+
+        <div class="wage-settings">
+            <label>お店の時給ルール設定</label>
+            <div class="wage-tier">
+                <span>①</span>
+                <input type="time" id="t1_start" value="05:00"> 〜 <input type="time" id="t1_end" value="17:00">
+                は <input type="number" id="w1" value="1080" step="10"> 円
+            </div>
+            <div class="wage-tier">
+                <span>②</span>
+                <input type="time" id="t2_start" value="17:00"> 〜 <input type="time" id="t2_end" value="22:00">
+                は <input type="number" id="w2" value="1180" step="10"> 円
+            </div>
+            <div class="wage-tier">
+                <span>③</span>
+                <input type="time" id="t3_start" value="22:00"> 〜 <input type="time" id="t3_end" value="05:00">
+                は <input type="number" id="w3" value="1350" step="10"> 円
+            </div>
+        </div>
+
+        <div class="field">
+            <label for="imageInput">シフト表の画像（全員分が映っていてOK）</label>
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
+        <button id="runBtn">画像を解析して計算する</button>
+        <div id="status"></div>
+    </div>
+
+    <div class="manual-area">
+        <h3>手入力でシフトを追加</h3>
+        <div class="manual-inputs">
+            <div>
+                <label>日付</label>
+                <input type="text" id="manualDate" placeholder="例: 6/5">
+            </div>
+            <div>
+                <label>出勤時間</label>
+                <input type="time" id="manualStart">
+            </div>
+            <div>
+                <label>退勤時間</label>
+                <input type="time" id="manualEnd">
+            </div>
+            <div>
+                <label>休憩(分)</label>
+                <input type="number" id="manualBreak" value="0" min="0" step="15">
+            </div>
+            <button onclick="addManualShift()" class="add-btn">➕ 追加</button>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>日付</th>
+                <th>時間</th>
+                <th style="width: 80px;">休憩(分)</th>
+                <th>日給</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="shiftTableBody">
+        </tbody>
+    </table>
+
+    <div class="total-box">
+        合計支給額: <span id="totalPay">0</span> 円
+        <small id="shiftCount"></small>
+    </div>
+</div>
+
+<script src="shift.js"></script>
+</body>
+</html>
