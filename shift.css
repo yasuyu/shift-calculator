@@ -88,3 +88,21 @@ th { background-color: #ffe0b2; color: #e65100; }
     border-color: #e65100;
     background-color: #fff3e0;
 }
+
+.image-preview {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: #eef2f6;
+    border-radius: 4px;
+}
+.image-preview summary { cursor: pointer; }
+.image-preview img { display: block; max-width: 100%; height: auto; margin-top: 10px; }
+.shift-edit-hint { font-size: 14px; color: #555; margin: 0; }
+.shift-table-scroll { overflow-x: auto; }
+.shift-table-scroll table { min-width: 560px; }
+.shift-table-scroll th, .shift-table-scroll [data-pay] { white-space: nowrap; }
+.shift-date-input[type="text"] { min-width: 74px; }
+.shift-time-inputs { display: flex; align-items: center; gap: 6px; }
+.shift-time-inputs input[type="time"] { min-width: 95px; }
+.shift-table-scroll [aria-invalid="true"] { border-color: #b3261e; background: #fff4f2; }
+.shift-review { color: #b3261e; }

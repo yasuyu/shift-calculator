@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>シフト給与計算（休憩時間対応・完全版）</title>
     <link rel="stylesheet" href="shift.css">
 </head>
@@ -44,7 +45,7 @@
             <input type="file" id="imageInput" accept="image/*">
         </div>
         <button id="runBtn">画像を解析して計算する</button>
-        <div id="status"></div>
+        <div id="status" role="status"></div>
     </div>
 
     <div class="manual-area">
@@ -64,26 +65,32 @@
             </div>
             <div>
                 <label>休憩(分)</label>
-                <input type="number" id="manualBreak" value="0" min="0" step="15">
+                <input type="number" id="manualBreak" value="0" min="0" step="1">
             </div>
             <button onclick="addManualShift()" class="add-btn">➕ 追加</button>
         </div>
     </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>日付</th>
-                <th>時間</th>
-                <th style="width: 80px;">休憩(分)</th>
-                <th>日給</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody id="shiftTableBody">
-        </tbody>
-    </table>
+    <details id="imagePreview" class="image-preview" hidden>
+        <summary>解析に使った画像を表示</summary>
+        <img id="previewImage" alt="解析に使ったシフト表">
+    </details>
+    <p id="shiftEditHint" class="shift-edit-hint" hidden>一覧で日付・出退勤時刻・休憩を修正できます。変更すると給与も更新されます。</p>
+    <div class="shift-table-scroll">
+        <table aria-label="シフト一覧">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>日付</th>
+                    <th>出勤 〜 退勤</th>
+                    <th>休憩(分)</th>
+                    <th>日給</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="shiftTableBody"></tbody>
+        </table>
+    </div>
 
     <div class="total-box">
         合計支給額: <span id="totalPay">0</span> 円

@@ -1,4 +1,8 @@
 let currentShifts = [];
+let imagePersonName = '';
+let imagePreviewUrl = '';
+
+const shiftTableBody = document.getElementById('shiftTableBody');
 
 function timeToDecimal(timeStr) {
     if (timeStr === undefined || timeStr === null || timeStr === "") return null;
@@ -85,6 +89,8 @@ function resizeImageToBase64(file) {
                 canvas.width = Math.round(width);
                 canvas.height = Math.round(height);
                 const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                 const compressedBase64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
                 resolve(compressedBase64);
@@ -101,13 +107,13 @@ function setStatus(msg, type) {
     const box = document.getElementById('status');
     box.className = type || 'info';
     box.style.display = 'block';
-    box.innerText = msg;
+    box.textContent = msg;
 }
 
 function clearStatus() {
     const box = document.getElementById('status');
     box.style.display = 'none';
-    box.innerText = '';
+    box.textContent = '';
 }
 
 function escapeHtml(s) {
@@ -116,11 +122,34 @@ function escapeHtml(s) {
     }[c]));
 }
 
-function renderTable() {
-    const tbody = document.getElementById('shiftTableBody');
+function isShiftDate(value) {
+    const match = value.trim().normalize('NFKC').match(/^(\d{1,2})[/月](\d{1,2})日?$/);
+    if (!match) return false;
+    const month = Number(match[1]);
+    const day = Number(match[2]);
+    const date = new Date(2000, month - 1, day);
+    return month >= 1 && month <= 12 && date.getMonth() === month - 1 && date.getDate() === day;
+}
+
+function getShiftIssues(shift) {
+    const issues = {};
+    if (shift.fromImage && !isShiftDate(shift.date)) issues.date = '日付';
+
+    const start = timeToDecimal(shift.start);
+    const end = timeToDecimal(shift.end);
+    if (start === null) issues.start = '出勤';
+    if (end === null) issues.end = '退勤';
+    const duration = start === null || end === null ? null : Math.round(((end - start + 24) % 24) * 60);
+    if (!Number.isInteger(shift.break) || shift.break < 0 || (duration !== null && shift.break > duration)) {
+        issues.break = '休憩';
+    }
+    return issues;
+}
+
+function updateTotals() {
     const totalPaySpan = document.getElementById('totalPay');
     const shiftCount = document.getElementById('shiftCount');
-    const personName = document.getElementById('personName').value.trim() || 'あなた';
+    const personName = imagePersonName || document.getElementById('personName').value.trim() || 'あなた';
 
     const rules = [
         {
@@ -141,46 +170,79 @@ function renderTable() {
     ];
 
     let totalAmount = 0;
-    const rows = currentShifts.map((shift, index) => {
-        const breakMins = shift.break || 0;
-        const dailyPay = calculateDailyPay(shift.start, shift.end, rules, breakMins);
+    let reviewCount = 0;
+    currentShifts.forEach((shift, index) => {
+        const row = shiftTableBody.rows[index];
+        const issues = getShiftIssues(shift);
+        const needsReview = Object.keys(issues).length > 0;
+        const review = row.querySelector('[data-review]');
+
+        for (const input of row.querySelectorAll('[data-field]')) {
+            input.setAttribute('aria-invalid', String(Boolean(issues[input.dataset.field])));
+        }
+        review.hidden = !needsReview;
+        review.textContent = needsReview ? `${Object.values(issues).join('・')}を確認` : '';
+        const payCell = row.querySelector('[data-pay]');
+        if (needsReview) {
+            reviewCount++;
+            payCell.textContent = '—';
+            return;
+        }
+
+        const dailyPay = calculateDailyPay(shift.start, shift.end, rules, shift.break);
         totalAmount += dailyPay;
-        const dateStr = shift.date || '-';
-        const startStr = shift.start || '不明';
-        const endStr = shift.end || '不明';
-        
-        // 🌟 変更：表の中に、直接数字を書き換えられる休憩時間枠を配置
+        payCell.textContent = `${Math.floor(dailyPay).toLocaleString()}円`;
+    });
+
+    totalPaySpan.textContent = Math.floor(totalAmount).toLocaleString();
+    const includedCount = currentShifts.length - reviewCount;
+    const countText = `${includedCount} シフト分の合計（${personName}さん）`;
+    const reviewText = reviewCount ? ` ／ 確認が必要な ${reviewCount} 件は集計対象外` : '';
+    shiftCount.textContent = currentShifts.length ? countText + reviewText : '';
+}
+
+function renderTable() {
+    const rows = currentShifts.map((shift, index) => {
+        const rowNumber = index + 1;
         return `<tr>
-            <td>${index + 1}</td>
-            <td>${escapeHtml(dateStr)}</td>
-            <td>${escapeHtml(startStr)} 〜 ${escapeHtml(endStr)}</td>
+            <td>${rowNumber}</td>
             <td>
-                <input type="number" class="break-input" value="${breakMins}" onchange="updateBreak(${index}, this.value)" step="15" min="0">
+                <input type="text" class="shift-date-input" data-field="date" value="${escapeHtml(shift.date)}"
+                    placeholder="6/5" aria-label="${rowNumber}行目の日付">
             </td>
-            <td>${Math.floor(dailyPay).toLocaleString()}円</td>
-            <td><button class="delete-btn" onclick="removeShift(${index})">削除</button></td>
+            <td>
+                <div class="shift-time-inputs">
+                    <input type="time" data-field="start" value="${escapeHtml(shift.start)}" aria-label="${rowNumber}行目の出勤時刻">
+                    <span aria-hidden="true">〜</span>
+                    <input type="time" data-field="end" value="${escapeHtml(shift.end)}" aria-label="${rowNumber}行目の退勤時刻">
+                </div>
+                <small class="shift-review" data-review hidden></small>
+            </td>
+            <td><input type="number" class="break-input" data-field="break" value="${shift.break ?? ''}"
+                step="1" min="0" aria-label="${rowNumber}行目の休憩時間（分）"></td>
+            <td data-pay></td>
+            <td><button type="button" class="delete-btn" onclick="removeShift(${index})" aria-label="${rowNumber}行目を削除">削除</button></td>
         </tr>`;
     });
 
-    tbody.innerHTML = rows.join('');
-    totalPaySpan.innerText = Math.floor(totalAmount).toLocaleString();
-    
-    if (currentShifts.length > 0) {
-        shiftCount.innerText = `${currentShifts.length} シフト分の合計（${escapeHtml(personName)}さん）`;
-    } else {
-        shiftCount.innerText = '';
-    }
+    shiftTableBody.innerHTML = rows.join('');
+    document.getElementById('shiftEditHint').hidden = currentShifts.length === 0;
+    updateTotals();
 }
 
-// 🌟 新追加：表の「休憩(分)」の数字を書き換えたら、データを更新して再計算する機能
-window.updateBreak = function(index, value) {
-    currentShifts[index].break = Number(value) || 0;
-    renderTable();
-};
+shiftTableBody.addEventListener('input', (event) => {
+    const input = event.target;
+    const field = input.dataset.field;
+    if (!field) return;
 
-const inputIds = ['t1_start','t1_end','w1','t2_start','t2_end','w2','t3_start','t3_end','w3'];
+    const shift = currentShifts[input.closest('tr').sectionRowIndex];
+    shift[field] = field === 'break' ? (input.value === '' ? null : Number(input.value)) : input.value;
+    updateTotals();
+});
+
+const inputIds = ['personName','t1_start','t1_end','w1','t2_start','t2_end','w2','t3_start','t3_end','w3'];
 inputIds.forEach(id => {
-    document.getElementById(id).addEventListener('input', renderTable);
+    document.getElementById(id).addEventListener('input', updateTotals);
 });
 
 function addManualShift() {
@@ -204,15 +266,54 @@ function addManualShift() {
 }
 
 function removeShift(index) {
-    currentShifts.splice(index, 1);
+    const [removed] = currentShifts.splice(index, 1);
+    if (removed.fromImage && !currentShifts.some(shift => shift.fromImage)) {
+        imagePersonName = '';
+        updateImagePreview(null);
+    }
     renderTable();
+}
+
+function updateImagePreview(file) {
+    const preview = document.getElementById('imagePreview');
+    const image = document.getElementById('previewImage');
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    imagePreviewUrl = file ? URL.createObjectURL(file) : '';
+    if (imagePreviewUrl) image.src = imagePreviewUrl;
+    else image.removeAttribute('src');
+    preview.hidden = !imagePreviewUrl;
+}
+
+function normalizeImageTime(value) {
+    if (typeof value !== 'string') return '';
+    const match = value.trim().normalize('NFKC').match(/^(\d{1,2}):([0-5]\d)$/);
+    if (!match || Number(match[1]) > 29) return '';
+    return `${String(Number(match[1]) % 24).padStart(2, '0')}:${match[2]}`;
+}
+
+function parseImageShifts(choice) {
+    if (choice?.finish_reason === 'length') {
+        throw new Error('解析結果が途中で切れました。シフト表の対象範囲を絞って再試行してください。');
+    }
+    const result = JSON.parse(choice?.message?.content || 'null');
+    if (!Array.isArray(result?.shifts) || result.shifts.some(shift => !shift || typeof shift !== 'object' || Array.isArray(shift))) {
+        throw new SyntaxError('シフトの一覧を取得できませんでした。');
+    }
+    return result.shifts.map(shift => ({
+        date: typeof shift.date === 'string' ? shift.date.trim() : '',
+        start: normalizeImageTime(shift.start),
+        end: normalizeImageTime(shift.end),
+        break: Number.isInteger(shift.break) && shift.break >= 0 ? shift.break : null,
+        fromImage: true
+    }));
 }
 
 async function processImageWithAPI() {
     const apiKey = document.getElementById('apiKey').value.trim();
     const personName = document.getElementById('personName').value.trim();
-    const fileInput = document.getElementById('imageInput');
+    const file = document.getElementById('imageInput').files[0];
     const runBtn = document.getElementById('runBtn');
+    const defaultButtonText = runBtn.textContent;
 
     clearStatus();
 
@@ -224,39 +325,34 @@ async function processImageWithAPI() {
         setStatus('⚠️ 対象者の名前を入力してください。', 'error');
         return;
     }
-    if (fileInput.files.length === 0) {
+    if (!file) {
         setStatus('⚠️ シフト表の画像ファイルを選択してください。', 'error');
         return;
     }
 
     try {
         runBtn.disabled = true;
-        runBtn.innerText = '⏳ 画像を解析中... (10〜30秒)';
+        runBtn.textContent = '画像を解析中…';
         setStatus('画像をリサイズしてAIに送信しています...', 'info');
 
-        const base64Data = await resizeImageToBase64(fileInput.files[0]);
+        const base64Data = await resizeImageToBase64(file);
 
-        // 🌟 変更：AIへの指示（プロンプト）に「休憩時間」のルールを追加
-        const promptText = `あなたは優秀なシフト表データ抽出AIです。
-画像は1ヶ月分のアルバイトシフト表で、複数の人の名前と日々の出勤・退勤時間が書かれています。
+        const promptText = `画像のシフト表から、対象者 ${JSON.stringify(personName)} の勤務だけを読み取ってください。
+対象者の名前と一致する行を探し、その行の各勤務を日付見出しと対応づけて日付順に並べてください。
+表が複数の週や段に分かれている場合は、各ブロックの名前と日付見出しを確認してください。
+空欄、休み、×、斜線のセルは除外します。対象者が見つからない場合は {"shifts":[]} を返してください。
 
-【タスク】
-シフト表から「${personName}」さんの行を探し、その人の全てのシフト（出勤時刻と退勤時刻のペア）を、日付順（左から右、上から下）に全て読み取ってください。
+出力は shifts 配列を持つ JSON オブジェクトです。勤務ごとに date、start、end、break を必ず含めます。
+- date は M/D。画像内の年月・日付見出しを使います。
+- start と end は24時間表記の HH:MM。翌日の 25:30 などは 01:30 としてください。
+- break は分単位の整数です。「休45」は45、「休憩1時間」は60、休憩の記載がない日は0です。
+- 勤務の記載があるセルは残します。日付や時刻が読めない場合や、休憩の記載があるのに分数が読めない場合は、推測せず該当項目に null を入れてください。
 
-【出力ルール（厳守）】
-- 純粋なJSON配列【のみ】を出力する
-- 挨拶、説明、コードブロック記法は絶対に書かない
-- 各要素は {"date": "M/D", "start": "HH:MM", "end": "HH:MM", "break": 0} の形式
-- 画像内に休憩時間（「休45」や「休憩1時間」など）が書かれていれば "break" に分単位（数値のみ）で入れ、書かれていなければ 0 にする
-- 空欄・休み・×・斜線などシフトが入っていない日は配列に含めない
-- 時刻は24時間表記の HH:MM 形式（例: 09:30, 18:00, 23:30）
-- 「${personName}」さんの行が見つからない場合は空配列 [] を返す
-
-【出力例】
-[{"date":"6/1","start":"18:30","end":"23:00","break":0},{"date":"6/3","start":"09:00","end":"17:00","break":45}]`;
+出力例
+{"shifts":[{"date":"6/1","start":"18:30","end":"23:00","break":0},{"date":"6/3","start":"09:00","end":null,"break":45}]}`;
 
         const requestBody = {
-            model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+            model: 'qwen/qwen3.8-27b',
             messages: [{
                 role: 'user',
                 content: [
@@ -264,8 +360,10 @@ async function processImageWithAPI() {
                     { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
                 ]
             }],
+            response_format: { type: 'json_object' },
+            reasoning_effort: 'none',
             temperature: 0.0,
-            max_tokens: 2048
+            max_completion_tokens: 4096
         };
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -287,43 +385,32 @@ async function processImageWithAPI() {
         }
 
         const data = await response.json();
-        const rawText = data.choices?.[0]?.message?.content || '';
-        console.log('💬 AIの生返答:', rawText);
+        const newShifts = parseImageShifts(data.choices?.[0]);
 
-        const jsonMatch = rawText.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-            throw new SyntaxError('AIがJSON配列を返しませんでした。\nF12でコンソールを開き「💬 AIの生返答:」を確認してください。');
-        }
-
-        let newShifts;
-        try {
-            newShifts = JSON.parse(jsonMatch[0]);
-        } catch (e) {
-            throw new SyntaxError('AIの返したJSONが壊れています。\nF12でコンソールを開き「💬 AIの生返答:」を確認してください。');
-        }
-
-        if (!Array.isArray(newShifts) || newShifts.length === 0) {
+        if (newShifts.length === 0) {
             setStatus(`⚠️ 「${personName}」さんのシフトが見つかりませんでした。\n名前の表記がシフト表通りか、画像が鮮明か確認してください。`, 'error');
-            runBtn.innerText = '🚀 画像を解析して計算する';
             return;
         }
 
+        if (currentShifts.length && !window.confirm('現在のシフト一覧を、今回の解析結果に置き換えますか？')) {
+            setStatus('現在のシフト一覧を保持しました。', 'info');
+            return;
+        }
+
+        updateImagePreview(file);
         currentShifts = newShifts;
+        imagePersonName = personName;
         renderTable();
-        
-        clearStatus();
-        runBtn.innerText = '✨ 計算完了！';
-        setTimeout(() => { runBtn.innerText = '🚀 画像を解析して計算する'; }, 3000);
+        setStatus(`${newShifts.length} 件のシフトを読み取りました。元画像と照らし合わせて一覧を確認してください。`, 'info');
 
     } catch (error) {
-        console.error('💥 エラー詳細:', error);
         if (error.name === 'SyntaxError') {
-            setStatus('⚠️ AIの返答を読み取れませんでした。\n' + error.message, 'error');
+            setStatus('⚠️ 解析結果を読み取れませんでした。画像を確認して再試行してください。', 'error');
         } else {
             setStatus('⚠️ エラーが発生しました。\n詳細: ' + error.message, 'error');
         }
-        runBtn.innerText = '🚀 画像を解析して計算する';
     } finally {
+        runBtn.textContent = defaultButtonText;
         runBtn.disabled = false;
     }
 }
