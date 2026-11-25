@@ -1,6 +1,7 @@
 let currentShifts = [];
 let imagePersonName = '';
 let imagePreviewUrl = '';
+let imageWorkMinutes = null;
 
 const shiftTableBody = document.getElementById('shiftTableBody');
 
@@ -69,40 +70,6 @@ function calculateDailyPay(startInput, endInput, rules, breakMins = 0) {
     return pay;
 }
 
-function resizeImageToBase64(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                const MAX_SIZE = 1800;
-                let width = img.width;
-                let height = img.height;
-                if (width > height && width > MAX_SIZE) {
-                    height *= MAX_SIZE / width;
-                    width = MAX_SIZE;
-                } else if (height > MAX_SIZE) {
-                    width *= MAX_SIZE / height;
-                    height = MAX_SIZE;
-                }
-                canvas.width = Math.round(width);
-                canvas.height = Math.round(height);
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                const compressedBase64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
-                resolve(compressedBase64);
-            };
-            img.onerror = (e) => reject(new Error('画像の読み込みに失敗しました'));
-            img.src = event.target.result;
-        };
-        reader.onerror = (e) => reject(new Error('ファイルの読み込みに失敗しました'));
-        reader.readAsDataURL(file);
-    });
-}
-
 function setStatus(msg, type) {
     const box = document.getElementById('status');
     box.className = type || 'info';
@@ -131,19 +98,31 @@ function isShiftDate(value) {
     return month >= 1 && month <= 12 && date.getMonth() === month - 1 && date.getDate() === day;
 }
 
-function getShiftIssues(shift) {
+function getShiftDuration(start, end) {
+    if (start === null || end === null) return null;
+    return Math.round(((end - start + 24) % 24) * 60);
+}
+
+function getShiftIssues(shift, start, end, duration) {
     const issues = {};
     if (shift.fromImage && !isShiftDate(shift.date)) issues.date = '日付';
 
-    const start = timeToDecimal(shift.start);
-    const end = timeToDecimal(shift.end);
     if (start === null) issues.start = '出勤';
     if (end === null) issues.end = '退勤';
-    const duration = start === null || end === null ? null : Math.round(((end - start + 24) % 24) * 60);
     if (!Number.isInteger(shift.break) || shift.break < 0 || (duration !== null && shift.break > duration)) {
         issues.break = '休憩';
     }
     return issues;
+}
+
+function parseWorkTime(value) {
+    if (typeof value !== 'string') return null;
+    const match = value.trim().normalize('NFKC').match(/^(\d{1,3}):([0-5]\d)$/);
+    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+function formatWorkTime(minutes) {
+    return `${Math.floor(minutes / 60)}時間${minutes % 60}分`;
 }
 
 function updateTotals() {
@@ -170,10 +149,15 @@ function updateTotals() {
     ];
 
     let totalAmount = 0;
+    let totalWorked = 0;
+    let importedWorked = 0;
     let reviewCount = 0;
     currentShifts.forEach((shift, index) => {
         const row = shiftTableBody.rows[index];
-        const issues = getShiftIssues(shift);
+        const start = timeToDecimal(shift.start);
+        const end = timeToDecimal(shift.end);
+        const duration = getShiftDuration(start, end);
+        const issues = getShiftIssues(shift, start, end, duration);
         const needsReview = Object.keys(issues).length > 0;
         const review = row.querySelector('[data-review]');
 
@@ -191,6 +175,8 @@ function updateTotals() {
 
         const dailyPay = calculateDailyPay(shift.start, shift.end, rules, shift.break);
         totalAmount += dailyPay;
+        totalWorked += duration - shift.break;
+        if (shift.fromImage) importedWorked += duration - shift.break;
         payCell.textContent = `${Math.floor(dailyPay).toLocaleString()}円`;
     });
 
@@ -199,6 +185,15 @@ function updateTotals() {
     const countText = `${includedCount} シフト分の合計（${personName}さん）`;
     const reviewText = reviewCount ? ` ／ 確認が必要な ${reviewCount} 件は集計対象外` : '';
     shiftCount.textContent = currentShifts.length ? countText + reviewText : '';
+    document.getElementById('workedTime').textContent = currentShifts.length ? `勤務時間 ${formatWorkTime(totalWorked)}` : '';
+
+    const timeCheck = document.getElementById('workTimeCheck');
+    const mismatch = imageWorkMinutes !== null && importedWorked !== imageWorkMinutes;
+    timeCheck.hidden = !mismatch;
+    timeCheck.textContent = mismatch
+        ? `画像から取り込んだ勤務は${formatWorkTime(importedWorked)}、表の勤務時間は${formatWorkTime(imageWorkMinutes)}です。元画像と照らし合わせてください。`
+        : '';
+    document.getElementById('payLabel').textContent = mismatch || reviewCount ? '暫定支給額' : '合計支給額';
 }
 
 function renderTable() {
@@ -269,6 +264,7 @@ function removeShift(index) {
     const [removed] = currentShifts.splice(index, 1);
     if (removed.fromImage && !currentShifts.some(shift => shift.fromImage)) {
         imagePersonName = '';
+        imageWorkMinutes = null;
         updateImagePreview(null);
     }
     renderTable();
@@ -287,31 +283,53 @@ function updateImagePreview(file) {
 function normalizeImageTime(value) {
     if (typeof value !== 'string') return '';
     const match = value.trim().normalize('NFKC').match(/^(\d{1,2}):([0-5]\d)$/);
-    if (!match || Number(match[1]) > 29) return '';
+    if (!match || Number(match[1]) > 47) return '';
     return `${String(Number(match[1]) % 24).padStart(2, '0')}:${match[2]}`;
 }
 
-function parseImageShifts(choice) {
+function parseImageShifts(choice, selectedRow) {
     if (choice?.finish_reason === 'length') {
         throw new Error('解析結果が途中で切れました。シフト表の対象範囲を絞って再試行してください。');
     }
     const result = JSON.parse(choice?.message?.content || 'null');
-    if (!Array.isArray(result?.shifts) || result.shifts.some(shift => !shift || typeof shift !== 'object' || Array.isArray(shift))) {
+    if (!Array.isArray(result?.shifts)) {
         throw new SyntaxError('シフトの一覧を取得できませんでした。');
     }
-    return result.shifts.map(shift => ({
-        date: typeof shift.date === 'string' ? shift.date.trim() : '',
-        start: normalizeImageTime(shift.start),
-        end: normalizeImageTime(shift.end),
-        break: Number.isInteger(shift.break) && shift.break >= 0 ? shift.break : null,
-        fromImage: true
-    }));
+    const seenDays = new Set();
+    const shifts = result.shifts.map(shift => {
+        if (!shift || typeof shift !== 'object' || (Array.isArray(shift) && shift.length !== 4)) {
+            throw new SyntaxError('シフトの項目を取得できませんでした。');
+        }
+        const [dateOrDay, start, end, breakMinutes] = Array.isArray(shift)
+            ? shift
+            : [selectedRow ? shift.day : shift.date, shift.start, shift.end, shift.break];
+        let date = typeof dateOrDay === 'string' ? dateOrDay.trim() : '';
+        if (selectedRow) {
+            const day = dateOrDay;
+            if (!Number.isInteger(day) || day < 1 || day > selectedRow.days || seenDays.has(day)) {
+                throw new Error('解析結果の日付に重複や誤りがありました。選択範囲を確認して再試行してください。');
+            }
+            seenDays.add(day);
+            date = `${selectedRow.month}/${day}`;
+        }
+        return {
+            date,
+            start: normalizeImageTime(start),
+            end: normalizeImageTime(end),
+            break: Number.isInteger(breakMinutes) && breakMinutes >= 0 ? breakMinutes : null,
+            fromImage: true
+        };
+    });
+    if (selectedRow) shifts.sort((a, b) => Number(a.date.split('/')[1]) - Number(b.date.split('/')[1]));
+    return { shifts, printedMinutes: selectedRow ? null : parseWorkTime(result.workTime) };
 }
 
 async function processImageWithAPI() {
     const apiKey = document.getElementById('apiKey').value.trim();
     const personName = document.getElementById('personName').value.trim();
-    const file = document.getElementById('imageInput').files[0];
+    const file = shiftImageInput.files[0];
+    const expectedTime = document.getElementById('expectedWorkTime').value.trim();
+    const expectedMinutes = parseWorkTime(expectedTime);
     const runBtn = document.getElementById('runBtn');
     const defaultButtonText = runBtn.textContent;
 
@@ -321,12 +339,16 @@ async function processImageWithAPI() {
         setStatus('⚠️ 『gsk_』から始まる正しいGroq APIキーを入力してください。', 'error');
         return;
     }
-    if (!personName) {
+    if (!personName && !rowMode.open) {
         setStatus('⚠️ 対象者の名前を入力してください。', 'error');
         return;
     }
     if (!file) {
         setStatus('⚠️ シフト表の画像ファイルを選択してください。', 'error');
+        return;
+    }
+    if (expectedTime && expectedMinutes === null) {
+        setStatus('シフト表の勤務時間は 54:45 のような「時間:分」で入力してください。', 'error');
         return;
     }
 
@@ -335,21 +357,20 @@ async function processImageWithAPI() {
         runBtn.textContent = '画像を解析中…';
         setStatus('画像をリサイズしてAIに送信しています...', 'info');
 
-        const base64Data = await resizeImageToBase64(file);
+        const selectedRow = getSelectedRow();
+        const imageUrl = selectedRow ? selectedRow.imageUrl : await resizeShiftImage(file);
 
-        const promptText = `画像のシフト表から、対象者 ${JSON.stringify(personName)} の勤務だけを読み取ってください。
-対象者の名前と一致する行を探し、その行の各勤務を日付見出しと対応づけて日付順に並べてください。
-表が複数の週や段に分かれている場合は、各ブロックの名前と日付見出しを確認してください。
-空欄、休み、×、斜線のセルは除外します。対象者が見つからない場合は {"shifts":[]} を返してください。
+        const instructions = selectedRow ? `画像には、対象者1人の勤務セルだけが日付付きで並んでいます。各枠の上の月/日と、その直下の同じ枠内だけを読み取ってください。他の枠の時刻や休憩は流用しないでください。ラベルだけがある枠は空欄です。
+出力例は {"shifts":[[6,"09:15","14:45",20]]} です。各勤務は [日,出勤,退勤,休憩分] の配列です。「日」は枠の見出しの数字（1から${selectedRow.days}）で、同じ日は1回だけ出してください。` : `画像のシフト表で対象者 ${JSON.stringify(personName)} の氏名欄を探してください。一致した氏名のセルを囲む上下の罫線を右に追い、同じ行の勤務だけを読み取ってください。日付は各列の見出しを使い、画像に傾きがあれば縦の罫線をたどってください。日付の見出しが読めない場合の日付は null、名前が確認できない場合の shifts は空配列です。
+出力例は {"workTime":"113:20","shifts":[["3/6","09:15","14:45",20]]} です。各勤務は [日付,出勤,退勤,休憩分] の配列で、日付は M/D です。workTime は対象者の行末の「勤務時間」の欄に印字された合計を写し、読めない場合は null にしてください。`;
 
-出力は shifts 配列を持つ JSON オブジェクトです。勤務ごとに date、start、end、break を必ず含めます。
-- date は M/D。画像内の年月・日付見出しを使います。
-- start と end は24時間表記の HH:MM。翌日の 25:30 などは 01:30 としてください。
-- break は分単位の整数です。「休45」は45、「休憩1時間」は60、休憩の記載がない日は0です。
-- 勤務の記載があるセルは残します。日付や時刻が読めない場合や、休憩の記載があるのに分数が読めない場合は、推測せず該当項目に null を入れてください。
+        const promptText = `${instructions}
 
-出力例
-{"shifts":[{"date":"6/1","start":"18:30","end":"23:00","break":0},{"date":"6/3","start":"09:00","end":null,"break":45}]}`;
+空欄、連休、有休、休み、×、斜線のセルは除外してください。勤務がある枠の上段が出勤、次の段が退勤で、その下の括弧内の数字が休憩の分数です。
+- 出勤と退勤は HH:MM の時刻。32:00 のような退勤は翌朝の08:00としてください。
+- 休憩分は整数です。(15) は15、(0) は0です。休憩の記載がない場合は0です。
+- 時刻や休憩欄の文字が判読できない場合は、その項目に null を入れてください。隣のセルから補ったり、よくある勤務のパターンを当てはめたりしないでください。
+余分な空白や改行を省いた1行の JSON オブジェクトだけを返してください。`;
 
         const requestBody = {
             model: 'qwen/qwen3.8-27b',
@@ -357,13 +378,13 @@ async function processImageWithAPI() {
                 role: 'user',
                 content: [
                     { type: 'text', text: promptText },
-                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
+                    { type: 'image_url', image_url: { url: imageUrl } }
                 ]
             }],
             response_format: { type: 'json_object' },
             reasoning_effort: 'none',
             temperature: 0.0,
-            max_completion_tokens: 4096
+            max_completion_tokens: 900
         };
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -376,6 +397,11 @@ async function processImageWithAPI() {
         });
 
         if (!response.ok) {
+            if (response.status === 429) {
+                const retryAfter = Number(response.headers.get('retry-after'));
+                const wait = retryAfter > 0 ? `${Math.ceil(retryAfter)}秒待って` : '少し時間をおいて';
+                throw new Error(`Groq の利用上限に達しました。${wait}からもう一度解析してください。`);
+            }
             let errMsg = `HTTP ${response.status}`;
             try {
                 const errorData = await response.json();
@@ -385,10 +411,11 @@ async function processImageWithAPI() {
         }
 
         const data = await response.json();
-        const newShifts = parseImageShifts(data.choices?.[0]);
+        const { shifts: newShifts, printedMinutes } = parseImageShifts(data.choices?.[0], selectedRow);
 
         if (newShifts.length === 0) {
-            setStatus(`⚠️ 「${personName}」さんのシフトが見つかりませんでした。\n名前の表記がシフト表通りか、画像が鮮明か確認してください。`, 'error');
+            const help = selectedRow ? '青い枠が対象者の勤務欄に合っているか確認してください。' : '名前の表記と画像の鮮明さを確認してください。';
+            setStatus(`シフトが見つかりませんでした。${help}`, 'error');
             return;
         }
 
@@ -400,6 +427,7 @@ async function processImageWithAPI() {
         updateImagePreview(file);
         currentShifts = newShifts;
         imagePersonName = personName;
+        imageWorkMinutes = expectedMinutes ?? printedMinutes;
         renderTable();
         setStatus(`${newShifts.length} 件のシフトを読み取りました。元画像と照らし合わせて一覧を確認してください。`, 'info');
 

@@ -106,3 +106,17 @@ th { background-color: #ffe0b2; color: #e65100; }
 .shift-time-inputs input[type="time"] { min-width: 95px; }
 .shift-table-scroll [aria-invalid="true"] { border-color: #b3261e; background: #fff4f2; }
 .shift-review { color: #b3261e; }
+
+.row-selection { margin: 12px 0; padding: 12px; background: #fff; border: 1px solid #ddd; border-radius: 6px; }
+.row-selection summary { cursor: pointer; font-weight: bold; }
+.row-selection p { font-size: 14px; margin: 10px 0; }
+.row-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }
+.row-controls label { margin: 0; }
+.row-controls input, .row-controls select { display: block; min-height: 32px; font: inherit; }
+.row-controls button { margin: 0; padding: 7px 12px; width: auto; font-size: 14px; }
+.row-image-scroll { max-height: 65vh; overflow: auto; }
+.row-image-scroll canvas { width: 100%; height: auto; cursor: crosshair; }
+.row-image-scroll canvas[hidden] { display: none; }
+.expected-work-time input[type="text"] { width: 8em; }
+.total-box #workTimeCheck { color: #a8281a; font-weight: bold; }
+.total-box #workTimeCheck[hidden], .total-box #workedTime:empty { display: none; }
